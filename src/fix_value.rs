@@ -1,16 +1,15 @@
 use crate::typenum::{Integer, U10};
 use crate::Fix;
 
-use anchor_lang::error::ErrorCode::InvalidNumericConversion;
-use anchor_lang::prelude::{borsh, AnchorDeserialize, AnchorSerialize, InitSpace, Result};
 use paste::paste;
+use borsh_derive::{BorshSerialize, BorshDeserialize};
 
 macro_rules! impl_fix_value {
     ($sign:ident, $bits:expr) => {
         paste! {
            /// A value-space `Fix` where base is always 10 and bits are a concrete type.
            /// Intended for serialized storage in Solana accounts where generics won't work.
-            #[derive(PartialEq, Eq, Copy, Clone, Debug, AnchorSerialize, AnchorDeserialize, InitSpace)]
+            #[derive(PartialEq, Eq, Copy, Clone, Debug, BorshSerialize, BorshDeserialize)]
             pub struct [<$sign FixValue $bits>] {
                 pub bits: [<$sign:lower $bits>],
                 pub exp: i8,
@@ -40,12 +39,12 @@ macro_rules! impl_fix_value {
                 Bits: From<[<$sign:lower $bits>]>,
                 Exp: Integer,
             {
-              type Error = anchor_lang::error::Error;
-              fn try_from(value: [<$sign FixValue $bits>]) -> Result<Fix<Bits, U10, Exp>> {
+              type Error = std::io::Error;
+              fn try_from(value: [<$sign FixValue $bits>]) -> Result<Fix<Bits, U10, Exp>, Self::Error> {
                 if value.exp == Exp::to_i8() {
                   Ok(Fix::new(value.bits.into()))
                 } else {
-                  Err(InvalidNumericConversion.into())
+                  Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "overflow"))
                 }
               }
             }
@@ -68,14 +67,13 @@ impl_fix_value!(I, 128);
 mod tests {
     use super::*;
     use crate::aliases::si::Kilo;
-    use anyhow::Result;
     use borsh::to_vec;
 
     macro_rules! fix_value_tests {
         ($sign:ident, $bits:expr) => {
             paste! {
                 #[test]
-                fn [<roundtrip_into_ $sign:lower $bits>]() -> Result<()> {
+                fn [<roundtrip_into_ $sign:lower $bits>]() -> Result<(), std::io::Error> {
                     let start = Kilo::new([<69 $sign:lower $bits>]);
                     let there: [<$sign FixValue $bits>] = start.into();
                     let back: Kilo<[<$sign:lower $bits>]> = there.try_into()?;
@@ -84,18 +82,18 @@ mod tests {
                 }
 
                 #[test]
-                fn [<roundtrip_serialize_ $sign:lower $bits>]() -> Result<()> {
+                fn [<roundtrip_serialize_ $sign:lower $bits>]() -> Result<(), std::io::Error> {
                     let start = [<$sign FixValue $bits>]::new(20, -2);
                     let bytes = to_vec(&start)?;
-                    let back = AnchorDeserialize::deserialize(&mut bytes.as_slice())?;
+                    let back = borsh::BorshDeserialize::deserialize(&mut bytes.as_slice())?;
                     Ok(assert_eq!(start, back))
                 }
 
                 #[test]
-                fn [<wrong_exp_should_fail_ $sign:lower $bits>]() -> Result<()> {
+                fn [<wrong_exp_should_fail_ $sign:lower $bits>]() -> Result<(), std::io::Error> {
                     let pow11 = [<$sign FixValue $bits>]::new(42, -11);
                     let wrong = TryInto::<Kilo<[<$sign:lower $bits>]>>::try_into(pow11);
-                    Ok(assert_eq!(Err(InvalidNumericConversion.into()), wrong))
+                    Ok(assert!(wrong.is_err()))
                 }
             }
         };

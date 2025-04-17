@@ -80,6 +80,8 @@ use core::marker::PhantomData;
 use core::ops::{Add, Div, Mul, Neg, Rem, Sub};
 use core::ops::{AddAssign, DivAssign, MulAssign, RemAssign, SubAssign};
 
+use borsh_derive::{BorshSerialize, BorshDeserialize};
+use bytemuck::{Pod, Zeroable};
 use muldiv::MulDiv;
 use num_traits::{CheckedAdd, CheckedDiv, CheckedMul, CheckedSub};
 use paste::paste;
@@ -115,12 +117,17 @@ use typenum::type_operators::{Abs, IsLess};
 /// - _(x B<sup>E</sup>) × y = (x × y) B<sup>E</sup>_
 /// - _(x B<sup>E</sup>) ÷ y = (x ÷ y) B<sup>E</sup>_
 /// - _(x B<sup>E</sup>) % y = (x % y) B<sup>E</sup>_
+#[derive(BorshSerialize, BorshDeserialize)]
+#[repr(transparent)]
 pub struct Fix<Bits, Base, Exp> {
     /// The underlying integer.
     pub bits: Bits,
 
     marker: PhantomData<(Base, Exp)>,
 }
+
+unsafe impl<Bits: Pod, Base: 'static, Exp: 'static> Pod for Fix<Bits, Base, Exp> {}
+unsafe impl<Bits: Zeroable, Base, Exp> Zeroable for Fix<Bits, Base, Exp> {}
 
 impl<Bits, Base, Exp> Fix<Bits, Base, Exp> {
     /// Creates a number.
@@ -615,6 +622,21 @@ where
 mod tests {
     use crate::aliases::si::{Kilo, Milli, Unit};
     use crate::{CheckedAdd, CheckedDivFix, CheckedMulFix, CheckedSub, MulDiv};
+
+    #[test]
+    fn bytemuck_pod() {
+        let fix: Kilo<i32> = Kilo::new(42);
+        let casted: i32 = bytemuck::cast(fix);
+        assert_eq!(casted, 42);
+    }
+
+    #[test]
+    fn borsh_serialize_deserialize() {
+        let fix: Kilo<i32> = Kilo::new(42);
+        let serialized = borsh::to_vec(&fix).unwrap();
+        let deserialized = borsh::from_slice::<Kilo<i32>>(&serialized).unwrap();
+        assert_eq!(fix, deserialized);
+    }
 
     #[test]
     fn convert_milli_to_kilo() {
